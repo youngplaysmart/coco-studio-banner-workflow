@@ -992,7 +992,7 @@ ${src.slice(0, 12000)}${refsOf(n).length ? `\n整体参考图（随附 ${refsOf(
       } else {
         banners = [{ name: "Banner", width: 1080, height: 1440, title: "", subtitle: "", layout: "", prompt: src.slice(0, 800) }];
       }
-      banners = banners.slice(0, 8).map((b) => ({ name: String(b.name || "Banner").slice(0, 40), width: clampDim(b.width, 1600), height: clampDim(b.height, 900), title: String(b.title || ""), subtitle: String(b.subtitle || ""), layout: String(b.layout || ""), coco: b.coco === true || (b.coco !== false && COCO_RE.test(String(b.prompt) + " " + String(b.layout || ""))), prompt: String(b.prompt) }));
+      banners = banners.slice(0, 8).map((b) => ({ name: String(b.name || "Banner").slice(0, 40), width: clampDim(b.width, 1600), height: clampDim(b.height, 900), title: String(b.title || ""), subtitle: String(b.subtitle || ""), layout: String(b.layout || ""), coco: b.coco === true && /coco/i.test(String(b.prompt)), prompt: String(b.prompt) }));
       spawnBranches(n, banners);
       return { banners };
     },
@@ -1004,7 +1004,7 @@ ${src.slice(0, 12000)}${refsOf(n).length ? `\n整体参考图（随附 ${refsOf(
       if (!up || !up.out || !up.out.prompt) throw new Error("先连一个提示词节点并运行它");
       if (isPinned(n)) return Object.assign({}, up.out, { imageNodeId: n.data.results[n.data.sel || 0].nodeId, pinned: true });
       const fk = fileKey(); if (!fk) throw new Error("先在顶栏粘贴 Figma 文件链接");
-      if (up.out.coco && cocoMode() === "edit") return await cocoEdit(n, up, fk);
+      if (up.out.coco && cocoMode() === "edit" && /coco/i.test(String(up.out.prompt))) return await cocoEdit(n, up, fk);
       const { width, height } = fitGen(up.out.width, up.out.height);
       const count = Math.max(1, Math.min(4, Number(n.data.count) || 1));
       const results = [];
@@ -2347,7 +2347,7 @@ return { bannerId: out.id, width: out.width, height: out.height };
       return Object.assign({}, up.out, { imageNodeId: ed.nodeId, edited: true });
     }
     const name = "Coco 改图 · " + (jiraKeyOf(n) ? jiraKeyOf(n) + " · " : "") + (up.out.name || "Banner");
-    const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "复制 Coco 母版图层用于改图", code: EDIT_CLONE_CODE.replace("__PARAMS__", JSON.stringify({ masterId: cocoMaster(), targetNodeId: nodeIdFromLink(S.file), name, prompt: editPromptFor(up.out) })) });
+    const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "复制 Coco 母版图层用于改图", code: EDIT_CLONE_CODE.replace("__PARAMS__", JSON.stringify({ masterId: cocoMaster(), targetNodeId: nodeIdFromLink(S.file), name, prompt: editPromptFor(up.out), ratio: (up.out.width || 3) / (up.out.height || 4) })) });
     const r = payload && typeof payload === "object" ? payload : {};
     if (!r.nodeId) throw new Error("没能复制 Coco 母版图层：" + JSON.stringify(payload).slice(0, 200));
     n.data.edit = { nodeId: r.nodeId, hashes: r.hashes || [], prompt: editPromptFor(up.out), consumed: false };
@@ -2365,7 +2365,13 @@ await figma.setCurrentPageAsync(tp);
 const c = master.clone(); tp.appendChild(c);
 let maxX = 0, minY = Infinity;
 for (const k of tp.children) if (k !== c) { maxX = Math.max(maxX, k.x + k.width); minY = Math.min(minY, k.y); }
-c.x = maxX + 200; c.y = minY === Infinity ? 0 : minY; c.name = P.name;
+c.name = P.name;
+if (P.ratio && P.ratio > 0) {
+  const nw = P.ratio >= 1 ? Math.round(1100 * P.ratio) : Math.round(1356 * P.ratio), nh = P.ratio >= 1 ? 1100 : 1356;
+  if ("fills" in c && Array.isArray(c.fills)) c.fills = c.fills.map((f) => f.type === "IMAGE" ? Object.assign({}, f, { scaleMode: "FIT" }) : f);
+  c.resize(nw, nh);
+}
+c.x = maxX + 200; c.y = minY === Infinity ? 0 : minY;
 const hashes = ("fills" in c && Array.isArray(c.fills)) ? c.fills.filter((f) => f.type === "IMAGE").map((f) => f.imageHash) : [];
 let font = { family: "Inter", style: "Regular" };
 try { await figma.loadFontAsync({ family: "Noto Sans SC", style: "Regular" }); font = { family: "Noto Sans SC", style: "Regular" }; } catch (e) { await figma.loadFontAsync(font); }
@@ -2403,6 +2409,31 @@ return { exists: true, hashes };
 const ids = __IDS__; const results = {};
 for (const id of ids) { const n = await figma.getNodeByIdAsync(id); results[id] = (n && !n.removed && "fills" in n && Array.isArray(n.fills)) ? n.fills.filter((f) => f.type === "IMAGE").map((f) => f.imageHash) : null; }
 return { results };
+`;
+  async function fixMisrouted() {
+    const bad = S.nodes.filter((x) => x.type === "image" && x.status === "waiting" && x.data.edit && !ups(x).some((p) => p.type === "prompt" && /coco/i.test(String(p.data.prompt))));
+    if (!bad.length) return;
+    const ids = [];
+    for (const n of bad) {
+      ids.push(n.data.edit.nodeId);
+      n.data.edit = null; n.status = "idle"; n.error = "";
+      for (const p of ups(n)) if (p.type === "prompt") { p.data.coco = false; remount(p); }
+      paint(n);
+    }
+    save(); snapshot(true); refreshPanels();
+    toast(`${bad.length} 张图的场景里没有 Coco，已改回普通生图：在右侧确认后生成`);
+    const fk = fileKey(); if (!fk || !mcp) return;
+    try { await call("Figma", "use_figma", { fileKey: fk, description: "清理误建的 Coco 改图图层", code: EDIT_REMOVE_CODE.replace("__IDS__", JSON.stringify(ids)) }); } catch { /* 图层可能已被删除 */ }
+  }
+  const EDIT_REMOVE_CODE = `
+const ids = __IDS__; let removed = 0;
+for (const id of ids) {
+  const c = await figma.getNodeByIdAsync(id); if (!c) continue;
+  let p = c; while (p && p.type !== "PAGE") p = p.parent;
+  if (p) { await p.loadAsync(); const t = p.children.find((n) => n.type === "TEXT" && n.name === "改图提示词 · " + id); if (t) t.remove(); }
+  c.remove(); removed++;
+}
+return { removed };
 `;
   function editPanel(n) {
     const ed = n.data.edit || {};
@@ -2571,6 +2602,7 @@ return { b64: figma.base64Encode(bytes), name: n.name, page: p ? p.name : "" };
     const [m, s] = await Promise.all([window.claude.use("mcp"), window.claude.use("sample")]);
     mcp = m; sample = s;
     mcpReadyResolve();
+    fixMisrouted();
     if (sample && sample.limits) { try { const l = await sample.limits(); imgCaps = l && l.images ? l.images : null; } catch { imgCaps = null; } }
     refreshRefBoxes();
     renderBoards();
