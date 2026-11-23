@@ -143,6 +143,8 @@ svg.i { width: 16px; height: 16px; flex: none; }
 .chipbtn.primary-chip { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
 .prog .pwait { font-size: 12px; color: var(--warn); }
 .cocoset { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.tplpick select { font-size: 12px; }
+.tplpick .tplnote { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .cocomaster { width: 96px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font-size: 12px; }
 .cocorow { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); cursor: pointer; }
 .cocorow input { width: 16px; height: 16px; accent-color: var(--accent); }
@@ -704,7 +706,7 @@ a.link:hover { text-decoration: underline; }
       board: {},
       jira: { key: "" },
       split: { raw: "", style: "" },
-      prompt: { prompt: "", title: "", subtitle: "", layout: "", width: 1600, height: 900, feedback: "", coco: false },
+      prompt: { prompt: "", title: "", subtitle: "", layout: "", width: 1600, height: 900, feedback: "", coco: false, tpl: "", tplName: "" },
       image: { model: MODELS[0], count: 1, results: [], sel: 0 },
       compose: { template: "", replaceText: true },
     }[type], d);
@@ -846,6 +848,7 @@ a.link:hover { text-decoration: underline; }
       cb.addEventListener("change", () => { n.data.coco = cb.checked; if (n.status === "done") { n.status = "stale"; paint(n); } for (const d of downs(n)) markStale(d); save(); snapshot(true); });
       b.append(h("label", { class: "cocorow", title: "勾选后，生图时自动附上 Coco 的标准外观描述，改写提示词时也会把标准形象图交给 Claude" },
         cb, h("img", { src: COCO_IMG, alt: "Coco 标准形象" }), h("span", {}, h("b", {}, "使用 Coco 标准形象"), h("small", {}, "外观、配色、服装按品牌标准，只改姿势和位置"))));
+      b.append(tplPicker(n));
       b.append(refBox(n, "这张图的参考图（可选）"));
       b.append(field(n, "feedback", "修改意见（可选）", "text", { placeholder: "例如：更亮一些，主体放右侧" }));
       b.append(h("div", { class: "acts" },
@@ -973,15 +976,17 @@ a.link:hover { text-decoration: underline; }
       return { key: (payload && payload.key) || key, summary: f.summary || "", description: desc, status: f.status && f.status.name, images: (f.attachment || []).filter((a) => /^image\//.test(a.mimeType || "")).length };
     },
     async split(n, up) {
+      try { await loadCatalog(); } catch { /* 版式库读不到时自动排版 */ }
       const src = up && up.type === "jira" && up.out ? `工单 ${up.out.key}：${up.out.summary}\n\n${up.out.description}` : (n.data.raw || "").trim();
       if (!src) throw new Error("连一个 Jira 节点，或在这里粘贴需求文字");
       let banners;
       if (sample) {
         const res = await sample.json(`你是营销 Banner 的需求拆解助手。把下面的需求拆成需要制作的每一张图。
-只回复 JSON：{"banners":[{"name":"简短图名","width":1600,"height":900,"title":"主标题原文","subtitle":"副标题原文","layout":"一句话说明画面布局和需要放的内容","coco":false,"prompt":"English image prompt"}]}
+只回复 JSON：{"banners":[{"name":"简短图名","width":1600,"height":900,"title":"主标题原文","subtitle":"副标题原文","layout":"一句话说明画面布局和需要放的内容","coco":false,"template":"","prompt":"English image prompt"}]}
 规则：
 - 尺寸用需求里写明的；没写时按平台常见尺寸，仍不确定就用 1080×1440。
 - title、subtitle 照抄需求原文，没有就用空字符串。
+${catText()}
 - 需求里提到 Coco、IP、吉祥物或角色时，coco 为 true：prompt 里用 "Coco" 指代它，写 Coco 的动作、姿势、表情、在画面中的位置与大小，以及一身适合这个场景的服装（例如球场就穿纯色球衣，周年庆就穿派对礼服；服装上不能有任何文字、数字或 Logo，不要用原来的橙色卫衣）；不要描述它的五官、肤色和体型（会按品牌标准保持）。没提到时 coco 为 false，画面里不要出现任何角色。
 - prompt 用英文，只描述背景画面：主体、场景、光线、配色、构图，写明为标题预留的干净区域在哪一侧；需要放 UI 卡片的一侧保持细节柔和。结尾固定加 "No text, no letters, no numbers, no logos, no watermark."。不要把标题文字写进 prompt。
 ${n.data.style ? "品牌与风格补充：" + n.data.style + "\n" : ""}
@@ -992,7 +997,7 @@ ${src.slice(0, 12000)}${refsOf(n).length ? `\n整体参考图（随附 ${refsOf(
       } else {
         banners = [{ name: "Banner", width: 1080, height: 1440, title: "", subtitle: "", layout: "", prompt: src.slice(0, 800) }];
       }
-      banners = banners.slice(0, 8).map((b) => ({ name: String(b.name || "Banner").slice(0, 40), width: clampDim(b.width, 1600), height: clampDim(b.height, 900), title: String(b.title || ""), subtitle: String(b.subtitle || ""), layout: String(b.layout || ""), coco: b.coco === true && /coco/i.test(String(b.prompt)), prompt: String(b.prompt) }));
+      banners = banners.slice(0, 8).map((b) => ({ name: String(b.name || "Banner").slice(0, 40), width: clampDim(b.width, 1600), height: clampDim(b.height, 900), title: String(b.title || ""), subtitle: String(b.subtitle || ""), layout: String(b.layout || ""), template: tplFor(b), coco: b.coco === true && /coco/i.test(String(b.prompt)), prompt: String(b.prompt) }));
       spawnBranches(n, banners);
       return { banners };
     },
@@ -1021,12 +1026,18 @@ ${src.slice(0, 12000)}${refsOf(n).length ? `\n整体参考图（随附 ${refsOf(
     async compose(n, up) {
       if (!up || !up.out || !up.out.imageNodeId) throw new Error("先连一个生图节点并运行它");
       const fk = fileKey(); if (!fk) throw new Error("先在顶栏粘贴 Figma 文件链接");
+      if (up.out.templateBuilt && up.out.bannerId) { n.data.ver = (n.data.ver || 0) + 1; return { bannerId: up.out.bannerId }; }
+      const pn = ups(up).find((x) => x.type === "prompt");
+      if (pn && pn.data.tpl && !up.data.tplFailed) {
+        try { const r = await buildFromTemplate(n, up, "image", { imageNodeId: up.out.imageNodeId }); n.data.ver = (n.data.ver || 0) + 1; return r; }
+        catch (e) { if (e && e.code === "lib_unavailable") { up.data.tplFailed = true; toast(e.message, true); } else throw e; }
+      }
       const tpl = n.data.template ? nodeIdFromLink(n.data.template) : null;
       const pnode = ups(up).find((x) => x.type === "prompt");
       const latest = pnode ? { title: pnode.data.title, subtitle: pnode.data.subtitle === SUBLINE_HINT ? "" : pnode.data.subtitle } : {};
       if (n.data.template && !tpl) throw new Error("模板链接里没有 node-id：在 Figma 里右键帧 → 复制链接");
       const params = { imageNodeId: up.out.imageNodeId, targetNodeId: nodeIdFromLink(S.file), templateId: tpl, replaceText: n.data.replaceText !== false, title: (latest.title ?? up.out.title) || "", subtitle: (latest.subtitle ?? up.out.subtitle) || "", width: up.out.width, height: up.out.height, key: jiraKeyOf(n), prevBannerId: (n.out && n.out.bannerId) || null, version: (n.data.ver || 0) + 1, baseName: String(up.out.name || "AI").replace(/^[A-Z][A-Z0-9]+-\d+\s*·\s*/, "").slice(0, 40) };
-      const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "把生成的背景图合成为 Banner", code: COMPOSE_CODE.replace("__PARAMS__", JSON.stringify(params)) });
+      const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "把生成的背景图合成为 Banner", code: PLACE_LIB + COMPOSE_CODE.replace("__PARAMS__", JSON.stringify(params)) });
       const r = payload && typeof payload === "object" ? payload : {};
       if (!r.bannerId) throw new Error("Figma 没有返回合成结果：" + JSON.stringify(payload).slice(0, 300));
       n.data.ver = (n.data.ver || 0) + 1;
@@ -1038,25 +1049,25 @@ ${src.slice(0, 12000)}${refsOf(n).length ? `\n整体参考图（随附 ${refsOf(
 const P = __PARAMS__;
 const img = await figma.getNodeByIdAsync(P.imageNodeId);
 if (!img) throw new Error("找不到生成的图片 " + P.imageNodeId);
-let page = img; while (page && page.type !== "PAGE") page = page.parent;
-// 生图会默认放在文件第一页；按顶栏链接里的 node-id 把图和 Banner 挪到那一页
-if (P.targetNodeId) {
-  let tp = await figma.getNodeByIdAsync(P.targetNodeId);
-  while (tp && tp.type !== "PAGE") tp = tp.parent;
-  if (tp && tp.id !== page.id) {
-    await figma.setCurrentPageAsync(tp);
-    let maxX = 0, minY = Infinity;
-    for (const c of tp.children) { maxX = Math.max(maxX, c.x + c.width); minY = Math.min(minY, c.y); }
-    tp.appendChild(img);
-    img.x = tp.children.length > 1 ? maxX + 200 : 0; img.y = minY === Infinity ? 0 : minY;
-    page = tp;
-  }
-}
+let imgPage = img; while (imgPage && imgPage.type !== "PAGE") imgPage = imgPage.parent;
+const page = await mainPageOf(P.targetNodeId, imgPage);
+const pp = await procPage(page);
+// 生成图（默认落在文件第一页）挪进「生图过程」页对应工单的分区
+if (!(img.parent && img.parent.type === "SECTION" && imgPage.id === pp.id)) { await figma.setCurrentPageAsync(pp); putColumn(ticketSection(pp, P.key, "生图过程"), [img]); restack(pp); }
 await figma.setCurrentPageAsync(page);
 const fillOf = (n) => ("fills" in n && Array.isArray(n.fills)) ? [...n.fills].reverse().find((f) => f.type === "IMAGE" && f.visible !== false) : null;
 const imgFill = fillOf(img);
 if (!imgFill) throw new Error("生成图上没有图片填充");
-const paint = { type: "IMAGE", imageHash: imgFill.imageHash, scaleMode: "FILL" };
+let paint = { type: "IMAGE", imageHash: imgFill.imageHash, scaleMode: "FILL" };
+async function paintFor(w, h) {
+  try {
+    const sz = await figma.getImageByHash(imgFill.imageHash).getSizeAsync();
+    const fr = h / w, ir = sz.height / sz.width;
+    if (Math.abs(fr - ir) < 0.01) return paint;
+    const tf = ir > fr ? [[1, 0, 0], [0, fr / ir, Math.min(0.03, 1 - fr / ir)]] : [[ir / fr, 0, (1 - ir / fr) / 2], [0, 1, 0]];
+    return { type: "IMAGE", imageHash: imgFill.imageHash, scaleMode: "CROP", imageTransform: tf };
+  } catch (e) { return paint; }
+}
 async function setText(t, s) {
   for (const f of t.getRangeAllFontNames(0, t.characters.length)) await figma.loadFontAsync(f);
   t.characters = s;
@@ -1076,7 +1087,7 @@ if (P.templateId) {
     if (big && hasImg && !hasText && c.type !== "TEXT") c.visible = false;
   }
   const bg = figma.createRectangle();
-  bg.name = "AI 背景"; bg.resize(W, H); bg.fills = [paint];
+  bg.name = "AI 背景"; bg.resize(W, H); bg.fills = [await paintFor(W, H)];
   out.insertChild(Math.min(1, out.children.length), bg); bg.x = 0; bg.y = 0;
   if (P.replaceText && (P.title || P.subtitle)) {
     const texts = out.findAll((x) => x.type === "TEXT" && x.visible && typeof x.fontSize === "number")
@@ -1088,7 +1099,7 @@ if (P.templateId) {
 } else {
   const W = P.width, H = P.height;
   out = figma.createFrame(); page.appendChild(out);
-  out.resize(W, H); out.clipsContent = true; out.fills = [paint];
+  out.resize(W, H); out.clipsContent = true; out.fills = [await paintFor(W, H)];
   const shade = figma.createRectangle(); shade.name = "标题区压暗"; shade.resize(W, H);
   shade.fills = [{ type: "GRADIENT_LINEAR", gradientTransform: [[1, 0, 0], [0, 1, 0]],
     gradientStops: [{ position: 0, color: { r: 0, g: 0, b: 0, a: 0.55 } }, { position: 0.6, color: { r: 0, g: 0, b: 0, a: 0 } }] }];
@@ -1125,10 +1136,8 @@ if (P.templateId) {
 }
 out.name = "Banner · " + (P.key ? P.key + " · " : "") + P.baseName + " · " + Math.round(out.width) + "×" + Math.round(out.height) + (P.version > 1 ? " · v" + P.version : "");
 img.name = "生成图 · " + (P.key ? P.key + " · " : "") + P.baseName;
-// 重新合成时保留旧版，新版放在旧版右边，不重叠
-const prev = P.prevBannerId ? await figma.getNodeByIdAsync(P.prevBannerId) : null;
-if (prev && !prev.removed && prev.parent === page) { out.x = prev.x + prev.width + 80; out.y = prev.y; }
-else { out.x = img.x + img.width + 80; out.y = img.y; }
+// 成品放进主页面「工单 · 成品」分区（重新合成的新版排在同一分区右侧）
+putColumn(ticketSection(page, P.key, "成品"), [out]); restack(page);
 return { bannerId: out.id, width: out.width, height: out.height };
 `;
 
@@ -1185,7 +1194,7 @@ return { bannerId: out.id, width: out.width, height: out.height };
         const cp = addNode("compose", split.x + 1320, y, {}, true); connect(im.id, cp.id, true);
       }
       p.name = b.name;
-      Object.assign(p.data, { prompt: b.prompt, title: b.title, subtitle: b.subtitle, layout: b.layout, width: b.width, height: b.height, coco: !!b.coco });
+      Object.assign(p.data, { prompt: b.prompt, title: b.title, subtitle: b.subtitle, layout: b.layout, width: b.width, height: b.height, coco: !!b.coco, tpl: b.template || "", tplName: b.template ? tplLabel(CAT.items.find((t) => t.key === b.template)) : "" });
       p.status = "idle"; p.out = null;
       setOrphan(p, false); remount(p);
       for (const d of downs(p)) markStale(d);
@@ -1384,6 +1393,7 @@ return { bannerId: out.id, width: out.width, height: out.height };
         row("文案", st.prompts.length ? `${st.titled.length} / ${st.prompts.length} 已有主标题` : "—"),
         row("输出尺寸", sizes.length ? sizes.join("、") : "—"),
         row("Figma 文件", fk ? "已设置" : "未设置", fk ? "ok" : "warn"),
+        row("版式库", libSetting()),
         ...(st.prompts.some((p) => p.data.coco) ? row("Coco 图", cocoMode() === "edit" ? cocoSetting() : "按文字描述生成") : []),
         row("预计生图", st.shots ? `${st.shots} 次（消耗 Figma AI 额度）` : "—")),
       progBox,
@@ -1392,6 +1402,12 @@ return { bannerId: out.id, width: out.width, height: out.height };
         h("div", { class: "next" }, "后续：生成图片 → 合成 Banner → 在 Figma 中调整")));
   }
 
+  function libSetting() {
+    const inp = h("input", { class: "cocomaster", value: S.libFile || DEFAULT_LIB, "aria-label": "版式库文件链接", title: "Design Library 文件的链接或文件 key" });
+    inp.addEventListener("change", () => { S.libFile = inp.value.trim() || DEFAULT_LIB; save(); loadCatalog(true).then(() => toast(`已载入 ${CAT.items.length} 个版式`)).catch((e) => toast(errText(e), true)); });
+    const btn = h("button", { class: "chipbtn", onclick: () => loadCatalog(true).then(() => toast(`已载入 ${CAT.items.length} 个版式`)).catch((e) => toast(errText(e), true)) }, catLoading ? "读取中…" : "刷新");
+    return h("span", { class: "cocoset" }, CAT.items.length && CAT.fileKey === libKey() ? `${CAT.items.length} 个版式 · ` : "未载入 · ", inp, btn);
+  }
   function cocoSetting() {
     const inp = h("input", { class: "cocomaster", value: S.cocoMaster || "418:183", "aria-label": "Coco 母版图层链接或 ID", title: "Figma 里 Coco 母版图层的链接或 node-id" });
     inp.addEventListener("change", () => { S.cocoMaster = inp.value.trim() || "418:183"; save(); toast("已更新 Coco 母版图层"); });
@@ -2336,6 +2352,7 @@ return { bannerId: out.id, width: out.width, height: out.height };
   }
   async function cocoEdit(n, up, fk) {
     const ed = n.data.edit;
+    const pnode = ups(n).find((x) => x.type === "prompt");
     if (ed && ed.nodeId && !ed.consumed) {
       const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "检查 Coco 改图是否完成", code: EDIT_CHECK_CODE.replace("__ID__", JSON.stringify(ed.nodeId)) });
       const r = payload && typeof payload === "object" ? payload : {};
@@ -2344,10 +2361,24 @@ return { bannerId: out.id, width: out.width, height: out.height };
       if (!changed) { if (n.data.editCheck) { n.data.editCheck = false; toast("这张图看起来还没改：请先在 Figma 里选中它，用「改图」生成后再点继续", true); } throw { code: "waiting_edit" }; }
       ed.consumed = true;
       n.data.results = [{ nodeId: ed.nodeId, thumb: "", ratio: "" }]; n.data.sel = 0;
-      return Object.assign({}, up.out, { imageNodeId: ed.nodeId, edited: true });
+      return Object.assign({}, up.out, { imageNodeId: ed.nodeId, edited: true, bannerId: ed.bannerId || null, templateBuilt: !!ed.bannerId });
+    }
+    if (pnode && pnode.data.tpl && !n.data.tplFailed) {
+      const prompt = editPromptFor(up.out) + "\n这是版式里的主视觉图：保持原图的构图、Coco 在画面中的位置和大小、以及给标题预留的空白区域不变。";
+      const name = "Coco 改图 · " + (jiraKeyOf(n) ? jiraKeyOf(n) + " · " : "") + (up.out.name || "Banner");
+      try {
+        const r = await buildFromTemplate(n, up, "coco", { editName: name, prompt });
+        n.data.edit = { nodeId: r.kvId, hashes: r.hashes || [], prompt, consumed: false, bannerId: r.bannerId };
+        toast("已从版式库调用版式：在它的主视觉上改 Coco 图即可");
+        throw { code: "waiting_edit" };
+      } catch (e) {
+        if (e && e.code === "waiting_edit") throw e;
+        if (e && e.code === "lib_unavailable") { n.data.tplFailed = true; toast(e.message, true); }
+        else throw e;
+      }
     }
     const name = "Coco 改图 · " + (jiraKeyOf(n) ? jiraKeyOf(n) + " · " : "") + (up.out.name || "Banner");
-    const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "复制 Coco 母版图层用于改图", code: EDIT_CLONE_CODE.replace("__PARAMS__", JSON.stringify({ masterId: cocoMaster(), targetNodeId: nodeIdFromLink(S.file), name, prompt: editPromptFor(up.out), ratio: (up.out.width || 3) / (up.out.height || 4) })) });
+    const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "复制 Coco 母版图层用于改图", code: PLACE_LIB + EDIT_CLONE_CODE.replace("__PARAMS__", JSON.stringify({ key: jiraKeyOf(n), masterId: cocoMaster(), targetNodeId: nodeIdFromLink(S.file), name, prompt: editPromptFor(up.out), ratio: (up.out.width || 3) / (up.out.height || 4) })) });
     const r = payload && typeof payload === "object" ? payload : {};
     if (!r.nodeId) throw new Error("没能复制 Coco 母版图层：" + JSON.stringify(payload).slice(0, 200));
     n.data.edit = { nodeId: r.nodeId, hashes: r.hashes || [], prompt: editPromptFor(up.out), consumed: false };
@@ -2358,29 +2389,28 @@ return { bannerId: out.id, width: out.width, height: out.height };
 const P = __PARAMS__;
 const master = await figma.getNodeByIdAsync(P.masterId);
 if (!master) throw new Error("找不到 Coco 母版图层 " + P.masterId);
-let mp = master; while (mp.type !== "PAGE") mp = mp.parent;
-let tp = mp;
-if (P.targetNodeId) { let t = await figma.getNodeByIdAsync(P.targetNodeId); while (t && t.type !== "PAGE") t = t.parent; if (t) tp = t; }
-await figma.setCurrentPageAsync(tp);
-const c = master.clone(); tp.appendChild(c);
-let maxX = 0, minY = Infinity;
-for (const k of tp.children) if (k !== c) { maxX = Math.max(maxX, k.x + k.width); minY = Math.min(minY, k.y); }
-c.name = P.name;
-if (P.ratio && P.ratio > 0) {
-  const nw = P.ratio >= 1 ? Math.round(1100 * P.ratio) : Math.round(1356 * P.ratio), nh = P.ratio >= 1 ? 1100 : 1356;
-  if ("fills" in c && Array.isArray(c.fills)) c.fills = c.fills.map((f) => f.type === "IMAGE" ? Object.assign({}, f, { scaleMode: "FIT" }) : f);
-  c.resize(nw, nh);
-}
-c.x = maxX + 200; c.y = minY === Infinity ? 0 : minY;
-const hashes = ("fills" in c && Array.isArray(c.fills)) ? c.fills.filter((f) => f.type === "IMAGE").map((f) => f.imageHash) : [];
+const main = await mainPageOf(P.targetNodeId);
+const pp = await procPage(main);
+await figma.setCurrentPageAsync(pp);
+const c = master.clone(); pp.appendChild(c); c.name = P.name;
+// 压平成目标比例的新图片（Coco 居中、四周补底色），改图输出才会是这个比例
+const ratio = P.ratio > 0 ? P.ratio : 3 / 4;
+const nw = ratio >= 1 ? Math.round(1100 * ratio) : Math.round(1356 * ratio), nh = ratio >= 1 ? 1100 : 1356;
+c.fills = [{ type: "SOLID", color: { r: 0.16, g: 0.16, b: 0.18 } }].concat(master.fills.filter((f) => f.type === "IMAGE" && f.visible !== false).map((f) => Object.assign({}, f, { scaleMode: "FIT" })));
+c.resize(nw, nh);
+const bytes = await c.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: nw } });
+const flat = figma.createImage(bytes);
+c.fills = [{ type: "IMAGE", imageHash: flat.hash, scaleMode: "FILL" }];
 let font = { family: "Inter", style: "Regular" };
 try { await figma.loadFontAsync({ family: "Noto Sans SC", style: "Regular" }); font = { family: "Noto Sans SC", style: "Regular" }; } catch (e) { await figma.loadFontAsync(font); }
 const t = figma.createText(); t.fontName = font; t.fontSize = 22; t.characters = P.prompt;
 t.fills = [{ type: "SOLID", color: { r: 0.55, g: 0.55, b: 0.6 } }];
-t.name = "改图提示词 · " + c.id; tp.appendChild(t);
-t.x = c.x; t.y = c.y + c.height + 40; t.resize(c.width, t.height); t.textAutoResize = "HEIGHT";
-return { nodeId: c.id, hashes, promptNodeId: t.id };
-`;
+t.name = "改图提示词 · " + c.id; pp.appendChild(t); t.resize(c.width, t.height); t.textAutoResize = "HEIGHT";
+const s = ticketSection(pp, P.key, "生图过程");
+putColumn(s, [c, t]); restack(pp);
+return { nodeId: c.id, hashes: [flat.hash], promptNodeId: t.id };
+`.replace("__LIB__", "");
+
   const EDIT_CHECK_CODE = `
 const n = await figma.getNodeByIdAsync(__ID__);
 if (!n || n.removed) return { exists: false };
@@ -2453,6 +2483,175 @@ return { removed };
         h("button", { class: "chipbtn primary-chip", onclick: () => { n.data.editCheck = true; runFrom(n); } }, "我已改好，继续")));
     return box;
   }
+
+
+  // 摆放规则：成品放在链接所在页的「工单 · 成品」分区；生成图、Coco 改图和提示词放在「生图过程（自动生成）」页的「工单 · 生图过程」分区
+  const PLACE_LIB = `
+const PROC_PAGE = "生图过程（自动生成）";
+async function mainPageOf(targetNodeId, fallback) {
+  let t = targetNodeId ? await figma.getNodeByIdAsync(targetNodeId) : null;
+  while (t && t.type !== "PAGE") t = t.parent;
+  return t || fallback || figma.currentPage;
+}
+async function procPage(mainPage) {
+  let p = figma.root.children.find((x) => x.name === PROC_PAGE);
+  if (!p) { p = figma.createPage(); p.name = PROC_PAGE; figma.root.insertChild(figma.root.children.indexOf(mainPage) + 1, p); }
+  await p.loadAsync(); return p;
+}
+function restack(page) {
+  const secs = page.children.filter((n) => n.type === "SECTION" && !/^Coco 母版/.test(n.name)).sort((a, b) => a.y - b.y);
+  if (!secs.length) return; let y = secs[0].y;
+  for (const s of secs) { s.y = y; y += s.height + 200; }
+}
+function ticketSection(page, key, kind) {
+  const prefix = (key || "未关联工单") + " · " + kind;
+  let s = page.children.find((n) => n.type === "SECTION" && n.name.startsWith(prefix));
+  if (!s) {
+    const secs = page.children.filter((n) => n.type === "SECTION" && !/^Coco 母版/.test(n.name));
+    s = figma.createSection(); s.name = prefix; page.appendChild(s);
+    s.x = secs.length ? Math.min(...secs.map((n) => n.x)) : 0;
+    s.y = secs.length ? Math.min(...secs.map((n) => n.y)) - 1 : 0;   // 新工单放在最上面
+    s.resizeWithoutConstraints(1200, 600);
+  }
+  return s;
+}
+function putColumn(s, nodes, prefix) {
+  let cx = 120;
+  for (const k of s.children) if (!nodes.includes(k)) cx = Math.max(cx, k.x + k.width + 120);
+  let cy = 120;
+  for (const n of nodes) { s.appendChild(n); n.x = cx; n.y = cy; cy += n.height + 40; }
+  let r = 0, b = 0; for (const k of s.children) { r = Math.max(r, k.x + k.width); b = Math.max(b, k.y + k.height); }
+  s.resizeWithoutConstraints(Math.max(1200, r + 120), Math.max(600, b + 120));
+  const cnt = s.children.filter((k) => k.type !== "TEXT").length;
+  s.name = s.name.replace(/（\\d+[^）]*）$/, "") + "（" + cnt + "）";
+}
+`;
+
+
+  // ---------- 版式库：从 Design Library 调用合适的版式二创 ----------
+  const DEFAULT_LIB = "DwOQaO0cWnPMjHAYqt1hga";
+  const CATKEY = "coco-lib-catalog-v1";
+  let CAT = load(CATKEY) || { fileKey: "", at: 0, items: [] };
+  const libKey = () => { const v = String(S.libFile || DEFAULT_LIB); const m = v.match(/figma\.com\/(?:design|file)\/([A-Za-z0-9]{22,128})/); return m ? m[1] : v.trim(); };
+  let catLoading = null;
+  async function loadCatalog(force) {
+    const fk = libKey();
+    if (!force && CAT.fileKey === fk && CAT.items.length && Date.now() - CAT.at < 6 * 3600 * 1000) return CAT;
+    if (catLoading) return catLoading;
+    catLoading = (async () => {
+      try {
+        const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "读取版式库里的版式", code: CATALOG_CODE });
+        const items = (payload && payload.items) || [];
+        CAT = { fileKey: fk, at: Date.now(), items }; store(CATKEY, CAT);
+        return CAT;
+      } finally { catLoading = null; refreshPanels(); for (const n of S.nodes) if (n.type === "prompt") { const el = els.get(n.id); const w = el && el.root.querySelector("[data-tpl]"); if (w) fillTplPicker(n, w); } }
+    })();
+    return catLoading;
+  }
+  const CATALOG_CODE = `
+const out = [];
+const skip = /18\\+|T&C|Gamble/i;
+for (const p of figma.root.children) {
+  await p.loadAsync();
+  for (const sec of p.children.filter((n) => n.type === "SECTION")) {
+    for (const n of sec.children) {
+      if (n.type !== "COMPONENT") continue;
+      const t = n.findAll((x) => x.type === "TEXT" && !skip.test(x.characters)).sort((a, b) => (typeof b.fontSize === "number" ? b.fontSize : 0) - (typeof a.fontSize === "number" ? a.fontSize : 0)).slice(0, 2).map((x) => x.characters.replace(/\\s+/g, " ").slice(0, 40));
+      out.push({ key: n.key, id: n.id, name: n.name, section: sec.name, w: Math.round(n.width), h: Math.round(n.height), texts: t });
+    }
+  }
+}
+return { items: out };
+`;
+  // 拆解时给 Claude 的版式目录（编号 T1、T2…）
+  function catText() {
+    if (!CAT.items.length) return "";
+    const lines = CAT.items.map((t, i) => `T${i + 1} | ${t.section} | ${t.w}×${t.h} | ${(t.texts || []).join(" / ") || t.name}`).join("\n");
+    return "- 版式库（设计师挑选过的好版式，可二创）：\n" + lines + "\n- 每张图如果版式库里有尺寸相同、主题相近的版式，template 填它的编号（例如 \"T3\"），并把 width、height 设成该版式的尺寸；没有合适的就填空字符串。";
+  }
+  function tplFor(b) {
+    const m = String(b.template || "").match(/^T(\d+)$/i); if (!m) return "";
+    const t = CAT.items[Number(m[1]) - 1]; if (!t) return "";
+    if (b.width && b.height && !sameRatio(t, b.width, b.height)) return "";
+    return t.key;
+  }
+  const sameRatio = (t, w, h) => Math.abs(t.w / t.h - w / h) < 0.02;
+  const tplLabel = (t) => `${t.section} · ${(t.texts[0] || t.name).slice(0, 26)} · ${t.w}×${t.h}`;
+  function tplPicker(n) { const w = h("div", { class: "f tplpick" }); w.dataset.tpl = n.id; fillTplPicker(n, w); return w; }
+  function fillTplPicker(n, w) {
+    const W = clampDim(n.data.width, 1600), H = clampDim(n.data.height, 900);
+    const fit = CAT.items.filter((t) => sameRatio(t, W, H));
+    const sel = h("select", { "aria-label": "版式" }, h("option", { value: "" }, fit.length ? "不用版式（自动排版）" : (CAT.items.length ? "版式库里没有这个比例，自动排版" : "版式库未载入，自动排版")));
+    const secs = [...new Set(fit.map((t) => t.section))];
+    for (const sname of secs) sel.append(h("optgroup", { label: sname }, fit.filter((t) => t.section === sname).map((t) => { const o = h("option", { value: t.key }, tplLabel(t)); if (t.key === n.data.tpl) o.selected = true; return o; })));
+    sel.addEventListener("change", () => {
+      const t = CAT.items.find((x) => x.key === sel.value);
+      n.data.tpl = sel.value; n.data.tplName = t ? tplLabel(t) : "";
+      if (n.status === "done") { n.status = "stale"; paint(n); }
+      for (const d of downs(n)) markStale(d);
+      save(); snapshot(true);
+    });
+    w.replaceChildren(h("span", {}, "版式（来自版式库，可二创）"), sel, h("small", { class: "tplnote" }, n.data.tpl ? "将调用这个版式：替换主视觉和标题文字" + (n.data.coco ? "；Coco 在版式主视觉上改图，构图和比例沿用版式" : "") : "选一个版式，构图、Coco 位置和尺寸都按版式来"));
+  }
+  // 用版式生成 Banner：mode "coco" 时把主视觉留给 Figma 改图，mode "image" 时把生成图放进主视觉
+  async function buildFromTemplate(n, up, mode, extra) {
+    const fk = fileKey();
+    const pnode = up && (up.type === "prompt" ? up : ups(up).find((x) => x.type === "prompt"));
+    const key = jiraKeyOf(n);
+    const baseName = String((up.out && up.out.name) || "Banner").replace(/^[A-Z][A-Z0-9]+-\d+\s*·\s*/, "").slice(0, 40);
+    const params = Object.assign({ compKey: pnode.data.tpl, mode, key, targetNodeId: nodeIdFromLink(S.file), title: pnode.data.title || "", subtitle: pnode.data.subtitle || "", baseName, version: (n.data.ver || 0) + 1 }, extra || {});
+    const { payload } = await call("Figma", "use_figma", { fileKey: fk, description: "调用版式库里的版式二创", code: PLACE_LIB + TEMPLATE_CODE.replace("__PARAMS__", JSON.stringify(params)) });
+    const r = payload && typeof payload === "object" ? payload : {};
+    if (r.error === "LIB_UNAVAILABLE") throw Object.assign(new Error("版式库还没有发布：请在 Design Library 文件里点「资源 → 发布」，并在本文件的「资源 → 库」里启用它。这次先用自动排版。"), { code: "lib_unavailable" });
+    if (!r.bannerId) throw new Error("版式二创失败：" + (r.error || JSON.stringify(payload).slice(0, 200)));
+    return r;
+  }
+  const TEMPLATE_CODE = `
+const P = __PARAMS__;
+const main = await mainPageOf(P.targetNodeId);
+await figma.setCurrentPageAsync(main);
+let comp;
+try { comp = await figma.importComponentByKeyAsync(P.compKey); } catch (e) { return { error: "LIB_UNAVAILABLE", message: String(e) }; }
+const out = comp.createInstance().detachInstance();
+main.appendChild(out);
+const imgOf = (n) => ("fills" in n && Array.isArray(n.fills)) ? [...n.fills].reverse().find((f) => f.type === "IMAGE" && f.visible !== false) : null;
+// 主视觉：面积最大的图片图层
+let kv = null, best = 0;
+for (const n of [out].concat(out.findAll(() => true))) { if (n.type === "INSTANCE" || !imgOf(n)) continue; const a = n.width * n.height; if (a > best) { best = a; kv = n; } }
+if (!kv) { out.remove(); return { error: "这个版式里没有找到主视觉图片" }; }
+async function setText(t, s) { for (const f of t.getRangeAllFontNames(0, t.characters.length)) await figma.loadFontAsync(f); t.characters = s; }
+const skip = /18\\+|T&C|Gamble/i;
+const texts = out.findAll((x) => x.type === "TEXT" && x.visible && typeof x.fontSize === "number" && !skip.test(x.characters)).sort((a, b) => b.fontSize - a.fontSize);
+if (P.title && texts[0]) await setText(texts[0], P.title);
+const second = texts.find((t) => t !== texts[0] && t.fontSize < texts[0].fontSize && t.characters.length > 6);
+if (P.subtitle && second) await setText(second, P.subtitle);
+const pp = await procPage(main);
+if (P.mode === "image") {
+  const img = await figma.getNodeByIdAsync(P.imageNodeId);
+  const f = img && imgOf(img);
+  if (f) {
+    const sz = await figma.getImageByHash(f.imageHash).getSizeAsync();
+    const fr = kv.height / kv.width, ir = sz.height / sz.width;
+    const tf = Math.abs(fr - ir) < 0.01 ? null : (ir > fr ? [[1, 0, 0], [0, fr / ir, Math.min(0.03, 1 - fr / ir)]] : [[ir / fr, 0, (1 - ir / fr) / 2], [0, 1, 0]]);
+    kv.fills = [tf ? { type: "IMAGE", imageHash: f.imageHash, scaleMode: "CROP", imageTransform: tf } : { type: "IMAGE", imageHash: f.imageHash, scaleMode: "FILL" }];
+    img.name = "生成图 · " + (P.key ? P.key + " · " : "") + P.baseName;
+    await figma.setCurrentPageAsync(pp); putColumn(ticketSection(pp, P.key, "生图过程"), [img]); restack(pp); await figma.setCurrentPageAsync(main);
+  }
+} else {
+  kv.name = P.editName;
+  if (P.prompt) {
+    let font = { family: "Inter", style: "Regular" };
+    try { await figma.loadFontAsync({ family: "Noto Sans SC", style: "Regular" }); font = { family: "Noto Sans SC", style: "Regular" }; } catch (e) { await figma.loadFontAsync(font); }
+    await figma.setCurrentPageAsync(pp);
+    const t = figma.createText(); t.fontName = font; t.fontSize = 22; t.characters = P.prompt; pp.appendChild(t);
+    t.fills = [{ type: "SOLID", color: { r: 0.55, g: 0.55, b: 0.6 } }]; t.name = "改图提示词 · " + kv.id; t.resize(1200, t.height); t.textAutoResize = "HEIGHT";
+    putColumn(ticketSection(pp, P.key, "生图过程"), [t]); restack(pp); await figma.setCurrentPageAsync(main);
+  }
+}
+out.name = "Banner · " + (P.key ? P.key + " · " : "") + P.baseName + " · " + Math.round(out.width) + "×" + Math.round(out.height) + (P.version > 1 ? " · v" + P.version : "");
+putColumn(ticketSection(main, P.key, "成品"), [out]); restack(main);
+return { bannerId: out.id, kvId: kv.id, hashes: (kv.fills || []).filter((f) => f.type === "IMAGE").map((f) => f.imageHash), width: out.width, height: out.height };
+`;
 
   // ---------- 参考图 ----------
   const REFKEY = "coco-ref-images-v1";
