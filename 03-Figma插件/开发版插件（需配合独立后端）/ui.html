@@ -1,0 +1,258 @@
+<style>
+  :root {
+    --bg: var(--figma-color-bg, #fff);
+    --bg2: var(--figma-color-bg-secondary, #f5f5f5);
+    --hover: var(--figma-color-bg-hover, #f0f0f0);
+    --text: var(--figma-color-text, #222);
+    --muted: var(--figma-color-text-secondary, #777);
+    --border: var(--figma-color-border, #e5e5e5);
+    --brand: var(--figma-color-bg-brand, #0d99ff);
+    --onbrand: var(--figma-color-text-onbrand, #fff);
+    --danger: var(--figma-color-text-danger, #d22);
+    --ok: var(--figma-color-text-success, #14ae5c);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 12px/1.5 Inter, "PingFang SC", "Noto Sans SC", system-ui, sans-serif; color: var(--text); background: var(--bg); }
+  header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 13px; font-weight: 600; margin: 0; flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--danger); }
+  section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  section[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+  h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; }
+  h2 .n { color: var(--muted); font-weight: 400; }
+  label { display: block; color: var(--muted); margin: 8px 0 4px; }
+  input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; }
+  input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--brand); outline-offset: -1px; }
+  textarea { resize: vertical; min-height: 72px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > * { flex: 1; }
+  .row .x { flex: 0 0 auto; color: var(--muted); }
+  button { font: inherit; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+  button:hover { background: var(--hover); }
+  button.primary { width: 100%; margin-top: 10px; background: var(--brand); color: var(--onbrand); border-color: transparent; font-weight: 600; padding: 8px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .toggle { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--text); }
+  .toggle input { width: auto; }
+  .status { margin-top: 8px; color: var(--muted); min-height: 18px; white-space: pre-wrap; }
+  .status.err { color: var(--danger); }
+  .canvas-name { padding: 6px 8px; background: var(--bg2); border-radius: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; max-height: 150px; overflow: auto; }
+  li { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
+  li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li button { padding: 2px 8px; }
+  .empty { color: var(--muted); padding-top: 6px; }
+</style>
+
+<header>
+  <h1>Coco Banner</h1>
+  <span id="conn" class="dot" title="后端未连接"></span>
+</header>
+
+<section id="s1">
+  <h2><span class="n">1</span>导入需求</h2>
+  <label for="jira">Jira 链接</label>
+  <input id="jira" placeholder="https://xxx.atlassian.net/browse/DESIGN-128" />
+  <details>
+    <summary>没有 Jira 链接？直接粘贴需求文字</summary>
+    <textarea id="raw" placeholder="制作一张小红书竖版海报……"></textarea>
+  </details>
+  <button id="parse" class="primary">解析需求并铺到画布</button>
+  <div id="st1" class="status"></div>
+</section>
+
+<section id="s2" aria-disabled="true">
+  <h2><span class="n">2</span>在画布上修改，然后生成</h2>
+  <div id="canvasName" class="canvas-name">还没有需求画布</div>
+  <label for="platform">平台与尺寸</label>
+  <select id="platform"></select>
+  <div class="row" style="margin-top:6px">
+    <input id="w" type="number" min="64" aria-label="宽" />
+    <span class="x">×</span>
+    <input id="h" type="number" min="64" aria-label="高" />
+  </div>
+  <label class="toggle"><input id="useChar" type="checkbox" />使用 Coco 角色</label>
+  <button id="gen" class="primary">生成 Banner</button>
+  <div id="st2" class="status">提示词、文案和参考图都以画布上的内容为准。</div>
+</section>
+
+<section id="s3">
+  <h2>提示词库</h2>
+  <button id="savePrompt">保存当前画布的提示词</button>
+  <ul id="history"></ul>
+</section>
+
+<section>
+  <details>
+    <summary>后端设置</summary>
+    <label for="apiBase">服务地址</label>
+    <input id="apiBase" placeholder="http://localhost:8000" />
+    <label for="token">访问口令（X-Coco-Token）</label>
+    <input id="token" type="password" />
+    <button id="saveSettings" style="margin-top:8px">保存并测试连接</button>
+  </details>
+</section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let settings = { apiBase: "http://localhost:8000", token: "" };
+  let platforms = {
+    "小红书": [1080, 1440], "抖音": [1080, 1920], "快手": [1080, 1920], "Instagram": [1080, 1350],
+    "TikTok": [1080, 1920], "YouTube": [1280, 720], "B 站": [1920, 1080], "微信": [900, 383],
+  };
+  let ctx = { hasCanvas: false };
+
+  // ---- 和主线程通信 ----
+  const pending = {};
+  let seq = 0;
+  function send(msg) { parent.postMessage({ pluginMessage: msg }, "*"); }
+  function ask(msg) {
+    return new Promise((resolve, reject) => {
+      const reqId = ++seq;
+      pending[reqId] = { resolve, reject };
+      send({ ...msg, reqId });
+    });
+  }
+  onmessage = (e) => {
+    const m = e.data.pluginMessage;
+    if (!m) return;
+    if (m.reqId && pending[m.reqId]) {
+      const p = pending[m.reqId]; delete pending[m.reqId];
+      return m.type === "error" ? p.reject(new Error(m.message)) : p.resolve(m);
+    }
+    if (m.type === "init") {
+      settings = m.settings; $("apiBase").value = settings.apiBase; $("token").value = settings.token || "";
+      renderHistory(m.history); checkHealth();
+    } else if (m.type === "context") { ctx = m; renderContext(); }
+    else if (m.type === "history") renderHistory(m.history);
+    else if (m.type === "error") status("st2", m.message, true);
+  };
+
+  // ---- 后端 ----
+  async function api(path, body) {
+    const res = await fetch(settings.apiBase.replace(/\/$/, "") + path, {
+      method: body ? "POST" : "GET",
+      headers: { "Content-Type": "application/json", "X-Coco-Token": settings.token || "" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `服务返回 ${res.status}`);
+    return data;
+  }
+  async function checkHealth() {
+    const dot = $("conn");
+    try {
+      const h = await api("/api/health");
+      if (h.platforms) platforms = h.platforms;
+      dot.className = "dot ok";
+      dot.title = `已连接 · 生图：${h.image_provider}`;
+      renderPlatforms();
+    } catch (e) {
+      dot.className = "dot bad";
+      dot.title = "连不上后端：检查服务地址，以及 manifest.json 的 networkAccess";
+    }
+  }
+
+  function status(id, text, err) { const el = $(id); el.textContent = text; el.className = "status" + (err ? " err" : ""); }
+
+  // ---- 平台尺寸 ----
+  function renderPlatforms() {
+    const sel = $("platform"), cur = sel.value;
+    sel.innerHTML = Object.keys(platforms).map((p) => `<option>${p}</option>`).join("") + "<option value=\"custom\">自定义</option>";
+    sel.value = cur || "小红书";
+  }
+  function currentMeta() {
+    return {
+      ...(ctx.meta || {}),
+      platform: $("platform").value === "custom" ? "自定义" : $("platform").value,
+      width: Math.max(64, parseInt($("w").value, 10) || 1080),
+      height: Math.max(64, parseInt($("h").value, 10) || 1440),
+      use_character: $("useChar").checked,
+    };
+  }
+  function pushMeta() { if (ctx.hasCanvas) send({ type: "update-meta", meta: currentMeta() }); }
+  $("platform").onchange = () => {
+    const s = platforms[$("platform").value];
+    if (s) { $("w").value = s[0]; $("h").value = s[1]; }
+    pushMeta();
+  };
+  ["w", "h"].forEach((id) => ($(id).onchange = () => { $("platform").value = "custom"; pushMeta(); }));
+  $("useChar").onchange = pushMeta;
+
+  function renderContext() {
+    $("s2").setAttribute("aria-disabled", String(!ctx.hasCanvas));
+    $("canvasName").textContent = ctx.hasCanvas ? ctx.name : "还没有需求画布";
+    if (!ctx.meta) return;
+    const m = ctx.meta;
+    $("platform").value = platforms[m.platform] ? m.platform : "custom";
+    $("w").value = m.width; $("h").value = m.height;
+    $("useChar").checked = !!m.use_character;
+  }
+
+  // ---- 1. 解析需求 ----
+  $("parse").onclick = async () => {
+    const jira = $("jira").value.trim(), raw = $("raw").value.trim();
+    if (!jira && !raw) return status("st1", "填一个 Jira 链接，或粘贴需求文字。", true);
+    const btn = $("parse"); btn.disabled = true;
+    status("st1", "正在读取并拆解需求…");
+    try {
+      const { draft, images } = await api("/api/parse", { jira_url: jira || null, raw_text: raw || null });
+      send({ type: "build", draft, images });
+      const tip = draft.llm_error ? `\n（AI 拆解失败，已用规则兜底：${draft.llm_error}）` : "";
+      status("st1", `已铺到画布：${images.length} 张附件图放进了参考位。${tip}`);
+    } catch (e) {
+      status("st1", e.message, true);
+    } finally { btn.disabled = false; }
+  };
+
+  // ---- 2. 生成 ----
+  $("gen").onclick = async () => {
+    const btn = $("gen"); btn.disabled = true;
+    try {
+      pushMeta();
+      status("st2", "读取画布内容…");
+      const { payload, sectionId } = await ask({ type: "collect" });
+      if (!payload.prompt) throw new Error("画布上的画面提示词是空的。");
+      const meta = currentMeta();
+      status("st2", `正在生成 ${meta.width}×${meta.height}（参考图 ${payload.references.length} 张）…`);
+      const { image } = await api("/api/generate", {
+        prompt: payload.prompt, negative: payload.negative,
+        width: meta.width, height: meta.height, use_character: meta.use_character,
+        references: payload.references, character: payload.character,
+      });
+      await ask({ type: "place", sectionId, image, meta, headline: payload.headline, subline: payload.subline });
+      status("st2", "已生成，放在需求画布右侧。不满意可以改完提示词再生成一次。");
+    } catch (e) {
+      status("st2", e.message, true);
+    } finally { btn.disabled = false; }
+  };
+
+  // ---- 提示词库 ----
+  function renderHistory(list) {
+    const ul = $("history");
+    if (!list || !list.length) { ul.innerHTML = '<li class="empty">还没有保存过提示词。</li>'; return; }
+    ul.innerHTML = "";
+    list.forEach((item, i) => {
+      const li = document.createElement("li");
+      const span = document.createElement("span");
+      span.textContent = item.prompt.replace(/\s+/g, " ");
+      span.title = item.prompt;
+      const use = document.createElement("button"); use.textContent = "使用";
+      use.onclick = () => send({ type: "apply-prompt", index: i });
+      const del = document.createElement("button"); del.textContent = "删除";
+      del.onclick = () => send({ type: "delete-prompt", index: i });
+      li.append(span, use, del); ul.append(li);
+    });
+  }
+  $("savePrompt").onclick = () => send({ type: "save-prompt" });
+
+  // ---- 设置 ----
+  $("saveSettings").onclick = () => {
+    settings = { apiBase: $("apiBase").value.trim() || "http://localhost:8000", token: $("token").value };
+    send({ type: "save-settings", settings });
+    checkHealth();
+  };
+
+  renderPlatforms();
+</script>

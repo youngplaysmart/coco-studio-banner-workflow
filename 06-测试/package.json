@@ -1,0 +1,10 @@
+{
+  "name": "coco-banner-workflow-tests",
+  "private": true,
+  "scripts": {
+    "test": "for f in round*.js jiraerr.js; do echo \"== $f\"; node $f; done"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

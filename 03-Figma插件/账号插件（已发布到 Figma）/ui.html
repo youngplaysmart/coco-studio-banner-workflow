@@ -1,0 +1,302 @@
+<!doctype html>
+<html>
+<head>
+  <script>
+    try { window.localStorage.getItem('x') } catch (e) {
+      const store = new Map()
+      const shim = {
+        getItem: (k) => store.has(k) ? store.get(k) : null,
+        setItem: (k, v) => { store.set(k, String(v)) },
+        removeItem: (k) => { store.delete(k) },
+        clear: () => { store.clear() },
+        key: (i) => Array.from(store.keys())[i] ?? null,
+        get length() { return store.size },
+      }
+      Object.defineProperty(window, 'localStorage', { value: shim, configurable: true })
+    }
+  </script>
+  <style>
+    html, body { margin: 0; padding: 0; height: auto; min-height: 0; }
+    body { display: block; }
+    #plugin-root { height: auto; }
+    body > #plugin-root > fig-footer {
+      background-color: var(--figma-color-bg);
+      box-shadow: inset 0 1px 0 0 var(--figma-color-border);
+      border-radius: 0 0 var(--radius-large) var(--radius-large);
+    }
+    .note { color: var(--figma-color-text-secondary); font-size: 11px; line-height: 16px; margin: 0; }
+    .canvas-name { color: var(--figma-color-text); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .canvas-name.empty { color: var(--figma-color-text-secondary); }
+    textarea.prompt {
+      width: 100%; box-sizing: border-box; min-height: 96px; resize: vertical;
+      font: 11px/16px var(--font-family, Inter, sans-serif); color: var(--figma-color-text);
+      background: var(--figma-color-bg-secondary); border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-medium, 5px); padding: 6px 8px;
+    }
+    ul.history { list-style: none; margin: 0; padding: 0; max-height: 140px; overflow: auto; }
+    ul.history li { display: flex; gap: 6px; align-items: center; padding: 4px 0; border-top: 1px solid var(--figma-color-border); font-size: 11px; color: var(--figma-color-text); }
+    ul.history li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #status { white-space: normal; }
+    #status.err { color: var(--figma-color-text-danger); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="plugin-root">
+    <fig-content>
+      <fig-group name="导入需求">
+        <fig-field>
+          <label>工单链接（可选）</label>
+          <fig-input-text id="link" placeholder="https://xxx.atlassian.net/browse/DESIGN-128"></fig-input-text>
+        </fig-field>
+        <fig-field>
+          <label>需求文字</label>
+          <fig-input-text id="raw" multiline placeholder="从 Jira 复制需求描述，包含平台、角色、参考图数量和文案"></fig-input-text>
+        </fig-field>
+        <fig-button id="build" variant="secondary">铺到画布</fig-button>
+      </fig-group>
+
+      <fig-group name="生成 Banner">
+        <fig-field>
+          <label>当前画布</label>
+          <span id="canvasName" class="canvas-name empty">还没有需求画布</span>
+        </fig-field>
+        <fig-field>
+          <label>平台</label>
+          <fig-dropdown id="platform">
+            <option>小红书</option><option>抖音</option><option>快手</option><option>Instagram</option>
+            <option>TikTok</option><option>YouTube</option><option>B 站</option><option>微信</option>
+            <option>自定义</option>
+          </fig-dropdown>
+        </fig-field>
+        <fig-field direction="horizontal" columns="half">
+          <label>宽</label>
+          <fig-input-number id="w" value="1080" min="64" max="4096"></fig-input-number>
+        </fig-field>
+        <fig-field direction="horizontal" columns="half">
+          <label>高</label>
+          <fig-input-number id="h" value="1440" min="64" max="4096"></fig-input-number>
+        </fig-field>
+        <fig-field direction="horizontal">
+          <label>使用 Coco 角色</label>
+          <fig-switch id="useChar" checked></fig-switch>
+        </fig-field>
+        <fig-field>
+          <label>生图方式</label>
+          <fig-options id="mode" options="Figma AI, 自有后端" value="Figma AI"></fig-options>
+        </fig-field>
+        <fig-field id="backendField" hidden>
+          <label>后端地址</label>
+          <fig-input-text id="backend" placeholder="https://coco-api.your-company.com"></fig-input-text>
+        </fig-field>
+        <p class="note" id="modeNote">创建后会选中背景层：按 ⌘K（Ctrl+K）运行 Make image，粘贴下方提示词。</p>
+        <fig-field id="promptField" hidden>
+          <label>完整提示词</label>
+          <textarea id="prompt" class="prompt" readonly></textarea>
+        </fig-field>
+        <fig-button id="copy" variant="secondary" hidden>复制提示词</fig-button>
+      </fig-group>
+
+      <fig-group name="提示词库">
+        <fig-button id="savePrompt" variant="secondary">保存当前画布的提示词</fig-button>
+        <ul id="history" class="history"></ul>
+      </fig-group>
+    </fig-content>
+    <fig-footer sticky>
+      <label id="status">粘贴需求，或选中一块已有的 Coco 画布</label>
+      <fig-button id="create" type="submit" disabled>创建 Banner</fig-button>
+    </fig-footer>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+    const post = (m) => parent.postMessage({ pluginMessage: m }, '*')
+    let platforms = {}
+    let hasCanvas = false
+    let lastBgId = null
+
+    // ---- 请求/应答 ----
+    const pending = {}
+    let seq = 0
+    function ask(m) {
+      return new Promise((resolve, reject) => {
+        const reqId = ++seq
+        pending[reqId] = { resolve, reject }
+        post(Object.assign({}, m, { reqId }))
+      })
+    }
+    window.onmessage = (e) => {
+      const m = e.data && e.data.pluginMessage
+      if (!m) return
+      if (m.reqId && pending[m.reqId]) {
+        const p = pending[m.reqId]; delete pending[m.reqId]
+        return m.type === 'error' ? p.reject(new Error(m.message)) : p.resolve(m)
+      }
+      if (m.type === 'init') {
+        platforms = m.platforms || {}
+        setVal($('backend'), m.backend || '')
+        renderHistory(m.history)
+      } else if (m.type === 'context') {
+        hasCanvas = m.hasCanvas
+        renderContext(m)
+      } else if (m.type === 'history') {
+        renderHistory(m.history)
+      } else if (m.type === 'error') {
+        status(m.message, true)
+      }
+    }
+
+    // ---- PropsKit 读写 ----
+    function val(el) { return el.value != null ? String(el.value) : (el.getAttribute('value') || '') }
+    function setVal(el, v) { el.value = v; el.setAttribute('value', v) }
+    function bool(el) {
+      if (typeof el.checked === 'boolean') return el.checked
+      return el.hasAttribute('checked') || el.getAttribute('value') === 'true'
+    }
+    function setBool(el, v) {
+      el.checked = !!v
+      if (v) el.setAttribute('checked', ''); else el.removeAttribute('checked')
+    }
+    function setDisabled(el, v) { if (v) el.setAttribute('disabled', ''); else el.removeAttribute('disabled') }
+    function onChange(el, fn) { el.addEventListener('change', fn); el.addEventListener('input', fn) }
+    function status(text, err) { const s = $('status'); s.textContent = text; s.className = err ? 'err' : '' }
+
+    // ---- 画布上下文 ----
+    function renderContext(m) {
+      const name = $('canvasName')
+      name.textContent = m.hasCanvas ? m.name : '还没有需求画布'
+      name.className = 'canvas-name' + (m.hasCanvas ? '' : ' empty')
+      setDisabled($('create'), !m.hasCanvas)
+      if (!m.meta) return
+      setVal($('platform'), platforms[m.meta.platform] ? m.meta.platform : '自定义')
+      setVal($('w'), String(m.meta.width)); setVal($('h'), String(m.meta.height))
+      setBool($('useChar'), m.meta.use_character)
+    }
+    function currentMeta() {
+      const p = val($('platform'))
+      return {
+        platform: p,
+        width: Math.max(64, Math.min(4096, Math.round(Number(val($('w'))) || 1080))),
+        height: Math.max(64, Math.min(4096, Math.round(Number(val($('h'))) || 1440))),
+        use_character: bool($('useChar')),
+      }
+    }
+    function pushMeta() { if (hasCanvas) post({ type: 'update-meta', meta: currentMeta() }) }
+    $('platform').addEventListener('change', () => {
+      const s = platforms[val($('platform'))]
+      if (s) { setVal($('w'), String(s[0])); setVal($('h'), String(s[1])) }
+      pushMeta()
+    })
+    ;['w', 'h'].forEach((id) => $(id).addEventListener('change', () => { setVal($('platform'), '自定义'); pushMeta() }))
+    onChange($('useChar'), pushMeta)
+
+    function isBackend() { return val($('mode')).indexOf('后端') >= 0 }
+    function renderMode() {
+      $('backendField').hidden = !isBackend()
+      $('modeNote').textContent = isBackend()
+        ? '后端需允许跨域访问，且不要求口令；Figma 若拦截请求，会在这里提示。'
+        : '创建后会选中背景层：按 ⌘K（Ctrl+K）运行 Make image，粘贴下方提示词。'
+    }
+    onChange($('mode'), renderMode)
+    $('backend').addEventListener('change', () => post({ type: 'save-backend', url: val($('backend')).trim() }))
+
+    // ---- 1. 铺画布 ----
+    $('build').addEventListener('click', async () => {
+      const raw = val($('raw')).trim()
+      if (!raw) return status('先粘贴需求文字', true)
+      setDisabled($('build'), true)
+      try {
+        const r = await ask({ type: 'build', raw, link: val($('link')) })
+        status('已铺到画布：' + r.name + '。直接在画布上修改，再点「创建 Banner」')
+      } catch (e) { status(e.message, true) }
+      finally { setDisabled($('build'), false) }
+    })
+
+    // ---- 2. 创建 Banner ----
+    function copyText(text) {
+      try { if (navigator.clipboard) { navigator.clipboard.writeText(text); return true } } catch (e) {}
+      const ta = document.createElement('textarea')
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.select()
+      let ok = false
+      try { ok = document.execCommand('copy') } catch (e) {}
+      ta.remove()
+      return ok
+    }
+    $('copy').addEventListener('click', () => {
+      status(copyText($('prompt').value) ? '提示词已复制，在 Make image 里粘贴即可' : '复制失败：请手动全选提示词复制', false)
+    })
+
+    $('create').addEventListener('click', async () => {
+      if (!hasCanvas) return status('先铺一块需求画布，或选中已有的 Coco 画布', true)
+      setDisabled($('create'), true)
+      try {
+        const meta = currentMeta()
+        const r = await ask({ type: 'create-banner', meta })
+        lastBgId = r.bgId
+        $('prompt').value = r.prompt
+        $('promptField').hidden = false
+        $('copy').hidden = false
+        if (!isBackend()) {
+          const copied = copyText(r.prompt)
+          status((copied ? '提示词已复制。' : '') + 'Banner 已创建，背景层已选中：按 ⌘K 运行 Make image 并粘贴提示词')
+          return
+        }
+        const base = val($('backend')).trim().replace(/\/$/, '')
+        if (!base) throw new Error('Banner 已创建，但没有填写后端地址')
+        status('正在请求后端生成…')
+        const { payload } = await ask({ type: 'collect', meta })
+        let res
+        try {
+          res = await fetch(base + '/api/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          })
+        } catch (e) {
+          throw new Error('连不上后端：可能是 Figma 拦截了这个插件的网络请求，或后端未开启跨域。Banner 已创建，可改用 Figma AI 生成背景')
+        }
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.detail || ('后端返回 ' + res.status))
+        await ask({ type: 'fill-bg', bgId: lastBgId, image: data.image })
+        status('已生成，标题是可编辑的文字图层')
+      } catch (e) { status(e.message, true) }
+      finally { setDisabled($('create'), !hasCanvas) }
+    })
+
+    // ---- 提示词库 ----
+    function renderHistory(list) {
+      const ul = $('history')
+      ul.innerHTML = ''
+      if (!list || !list.length) {
+        const li = document.createElement('li'); li.textContent = '还没有保存过提示词'; ul.append(li); return
+      }
+      list.forEach((item, i) => {
+        const li = document.createElement('li')
+        const span = document.createElement('span')
+        span.textContent = String(item.prompt || '').replace(/\s+/g, ' ')
+        span.title = item.prompt
+        const use = document.createElement('fig-button'); use.setAttribute('variant', 'ghost'); use.textContent = '使用'
+        use.addEventListener('click', async () => {
+          try { const r = await ask({ type: 'apply-prompt', index: i }); status(r.text) } catch (e) { status(e.message, true) }
+        })
+        const del = document.createElement('fig-button'); del.setAttribute('variant', 'ghost'); del.textContent = '删除'
+        del.addEventListener('click', () => post({ type: 'delete-prompt', index: i }))
+        li.append(span, use, del); ul.append(li)
+      })
+    }
+    $('savePrompt').addEventListener('click', async () => {
+      try { const r = await ask({ type: 'save-prompt' }); status(r.text) } catch (e) { status(e.message, true) }
+    })
+
+    // ---- 自适应高度 ----
+    let lastH = 0, raf = 0
+    function reportHeight() {
+      const h = Math.ceil($('plugin-root').getBoundingClientRect().height)
+      if (h && h !== lastH) { lastH = h; post({ type: 'resize', height: h }) }
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => { if (raf) cancelAnimationFrame(raf); raf = requestAnimationFrame(reportHeight) }).observe($('plugin-root'))
+    }
+    renderMode()
+  </script>
+</body>
+</html>
